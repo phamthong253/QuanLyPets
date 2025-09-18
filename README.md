@@ -1,4 +1,4 @@
-# listproduct
+# QuanLyPets
 
 Để sử dụng thì ae gõ:
   git clone https://github.com/<username>/<repository>.git
