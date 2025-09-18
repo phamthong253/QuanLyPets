@@ -1,6 +1,15 @@
 # listproduct
 
-A new Flutter project.
+Để sử dụng thì ae gõ:
+  git clone https://github.com/<username>/<repository>.git
+vd: git clone https://github.com/thongpham/flutter_example.git
+Sau khi chỉnh sửa thì push lên lại: 
+  git add .
+  git commit -m "Update feature XYZ"
+  git push origin main
+
+
+
 
 ## Getting Started
 
