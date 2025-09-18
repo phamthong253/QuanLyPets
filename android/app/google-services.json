@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "24328478509",
+    "project_id": "quanlypets",
+    "storage_bucket": "quanlypets.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:24328478509:android:94cab3cf783f3ed195fda4",
+        "android_client_info": {
+          "package_name": "com.example.listproduct"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWiVP-o62QYH5ya-s23J70zrSWqQWnMcU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
