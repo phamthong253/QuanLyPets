@@ -41,11 +41,7 @@ class _PetsOnBoardingScreenState extends State<PetsOnBoardingScreen> {
           GestureDetector(
             onTap: () {
               if (currentPage == onBoardData.length - 1) {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (_) => const PetsHomeScreen()),
-                  (route) => false,
-                );
+                Navigator.pushReplacementNamed(context, '/login');
               } else {
                 _pageController.nextPage(
                   duration: const Duration(milliseconds: 300),
