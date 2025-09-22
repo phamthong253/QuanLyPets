@@ -1,9 +1,9 @@
-import 'package:flutter/cupertino.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/widgets.dart';
 import 'package:bai3/Utils/const.dart';
 import 'package:bai3/models/cats_model.dart';
 import 'package:bai3/pages/pets_detail_page.dart';
+import 'package:bai3/pages/profile_page.dart';
 
 class PetsHomeScreen extends StatefulWidget {
   const PetsHomeScreen({super.key});
@@ -59,7 +59,17 @@ class _PetsHomeScreenState extends State<PetsHomeScreen> {
           children: List.generate(
             icons.length,
             (index) => GestureDetector(
-              onTap: () {},
+              onTap: () {
+                setState(() {
+                  selectedIndex = index;
+                });
+                if (index == 3) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ProfilePage()),
+                  );
+                }
+              },
               child: Container(
                 height: 60,
                 width: 50,
@@ -320,80 +330,77 @@ class _PetsHomeScreenState extends State<PetsHomeScreen> {
   }
 
   Padding headerParts() {
+    final user = FirebaseAuth.instance.currentUser;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
+      child: Row(
         children: [
-          Row(
+          // Avatar user
+          CircleAvatar(
+            radius: 25,
+            backgroundImage: user?.photoURL != null
+                ? NetworkImage(user!.photoURL!)
+                : const AssetImage("assets/images/avatar.png") as ImageProvider,
+          ),
+          const SizedBox(width: 10),
+
+          // Tên user
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                "Location",
-                style: TextStyle(fontSize: 16, color: black.withOpacity(0.6)),
+                "Xin chào,",
+                style: TextStyle(fontSize: 14, color: black.withOpacity(0.6)),
               ),
-              const SizedBox(width: 5),
-              const Icon(
-                Icons.keyboard_arrow_down_rounded,
-                color: blue,
-                size: 18,
+              Text(
+                user?.displayName ?? "Người dùng",
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: black,
+                ),
               ),
             ],
           ),
-          Row(
-            children: [
-              const Text.rich(
-                TextSpan(
-                  text: "Chicago, ",
-                  style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.bold,
-                    color: black,
+
+          const Spacer(),
+
+          // Nút search
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black12.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.search),
+          ),
+          const SizedBox(width: 10),
+
+          // Nút notification
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black12.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Stack(
+              children: [
+                const Icon(Icons.notifications_outlined),
+                Positioned(
+                  right: 5,
+                  top: 5,
+                  child: Container(
+                    height: 7,
+                    width: 7,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.red,
+                    ),
                   ),
-                  children: [
-                    TextSpan(
-                      text: "US",
-                      style: TextStyle(
-                        fontSize: 30,
-                        fontWeight: FontWeight.normal,
-                      ),
-                    ),
-                  ],
                 ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.black12.withOpacity(0.03),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.search),
-              ),
-              const SizedBox(width: 10),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.black12.withOpacity(0.03),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Stack(
-                  children: [
-                    const Icon(Icons.notifications_outlined),
-                    Positioned(
-                      right: 5,
-                      top: 5,
-                      child: Container(
-                        height: 7,
-                        width: 7,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.red,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
