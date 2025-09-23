@@ -1,10 +1,13 @@
+// profile_page.dart
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:bai3/pages/pets_home_screen.dart';
+import 'package:bai3/pages/login_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -15,420 +18,474 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   final User? user = FirebaseAuth.instance.currentUser;
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _postController = TextEditingController();
 
   File? _avatarImage;
-  List<File> _postImages = [];
+  String? avatarUrl;
+  String? name;
+  String? username;
+  String? userId;
+  String? email;
+  String? phone;
+  String? gender;
+  String? birthday;
 
   @override
   void initState() {
     super.initState();
-    _nameController.text = user?.displayName ?? "";
+    _loadUserProfile();
   }
 
-  /// chọn avatar mới
-  Future<void> _pickAvatarImage() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-    );
-    if (result != null && result.files.single.path != null) {
+  Future<void> _loadUserProfile() async {
+    if (user == null) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection("users")
+          .doc(user!.uid)
+          .get();
+      final data = doc.data();
+
       setState(() {
-        _avatarImage = File(result.files.single.path!);
+        avatarUrl = data?["avatar"] ?? user!.photoURL;
+        name = data?["name"] ?? user!.displayName ?? "";
+        username = data?["username"] ?? (user!.email?.split("@")[0] ?? "");
+        userId = data?["userId"] ?? user!.uid;
+        email = data?["email"] ?? user!.email;
+        phone = data?["phone"] ?? "";
+        gender = data?["gender"] ?? "";
+        birthday = data?["birthday"] ?? "";
       });
+    } catch (e) {
+      debugPrint("Load profile error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Lỗi tải profile: $e")));
+      }
     }
   }
 
-  /// upload file lên Firebase Storage
+  /// pick avatar local
+  Future<void> _pickAvatarImage() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+      );
+      if (result != null && result.files.single.path != null) {
+        setState(() {
+          _avatarImage = File(result.files.single.path!);
+        });
+      }
+    } catch (e) {
+      debugPrint("Pick avatar error: $e");
+    }
+  }
+
+  /// upload file lên Firebase Storage, trả về downloadURL hoặc "" nếu lỗi
   Future<String> _uploadFile(File file, String path) async {
     try {
       final ref = FirebaseStorage.instance.ref().child(path);
-      await ref.putFile(file);
-      return await ref.getDownloadURL(); // Trả về link HTTPS
+      final uploadTask = ref.putFile(file);
+      final snapshot = await uploadTask;
+      if (snapshot.state == TaskState.success) {
+        final url = await ref.getDownloadURL();
+        debugPrint("Upload success: $url");
+        return url;
+      } else {
+        debugPrint("Upload not success, state: ${snapshot.state}");
+        return "";
+      }
     } catch (e) {
       debugPrint("Upload error: $e");
       return "";
     }
   }
 
-  /// cập nhật profile
+  /// cập nhật toàn bộ profile (upload avatar nếu có + lưu Firestore + update Auth name/photo)
   Future<void> _updateProfile() async {
     if (user == null) return;
 
     try {
-      String? avatarUrl = user!.photoURL;
+      String newAvatarUrl = avatarUrl ?? "";
 
-      // Nếu chọn ảnh mới → upload
+      // upload avatar nếu có
       if (_avatarImage != null) {
-        avatarUrl = await _uploadFile(
+        newAvatarUrl = await _uploadFile(
           _avatarImage!,
           "avatars/${user!.uid}_${DateTime.now().millisecondsSinceEpoch}.jpg",
         );
-
-        if (avatarUrl.isNotEmpty) {
-          await user!.updatePhotoURL(avatarUrl);
+        if (newAvatarUrl.isNotEmpty) {
+          try {
+            await user!.updatePhotoURL(newAvatarUrl);
+          } catch (e) {
+            debugPrint("updatePhotoURL error: $e");
+          }
         }
       }
 
-      // Cập nhật tên
-      if (_nameController.text.isNotEmpty) {
-        await user!.updateDisplayName(_nameController.text);
+      // update displayName on Auth if changed
+      if (name != null && name!.isNotEmpty) {
+        try {
+          await user!.updateDisplayName(name);
+        } catch (e) {
+          debugPrint("updateDisplayName error: $e");
+        }
       }
-      // 🔥 Lưu vào Firestore (users collection)
+
+      // lưu vào Firestore
       await FirebaseFirestore.instance.collection("users").doc(user!.uid).set({
-        "name": _nameController.text,
-        "avatar": avatarUrl,
+        "name": name ?? "",
+        "username": username ?? "",
+        "avatar": newAvatarUrl,
+        "email": email ?? user!.email,
+        "userId": userId ?? user!.uid,
+        "phone": phone ?? "",
+        "gender": gender ?? "",
+        "birthday": birthday ?? "",
         "updatedAt": FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-      // 👉 BẮT BUỘC reload user sau khi update
-      await user!.reload();
-      final refreshedUser = FirebaseAuth.instance.currentUser;
+
+      // reload auth user to reflect changes locally
+      try {
+        await user!.reload();
+      } catch (_) {}
+
       if (mounted) {
         setState(() {
-          _avatarImage = null; // reset ảnh local đã chọn
+          avatarUrl = newAvatarUrl;
+          _avatarImage = null;
         });
-
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text("Cập nhật thành công ✅")));
-        // 👉 Điều hướng về PetHomeScreen
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const PetsHomeScreen()),
-        );
-        setState(() {}); // refresh UI
       }
     } catch (e) {
+      debugPrint("Update profile error: $e");
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text("Lỗi: $e")));
+        ).showSnackBar(SnackBar(content: Text("Lỗi cập nhật: $e")));
       }
     }
   }
 
-  /// chọn nhiều ảnh cho bài viết
-  Future<void> _pickPostImages() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: true,
-    );
-    if (result != null) {
-      setState(() {
-        _postImages = result.paths
-            .whereType<String>()
-            .map((p) => File(p))
-            .toList();
-      });
-    }
-  }
-
-  /// đăng bài viết
-  Future<void> _createPost() async {
-    if (_postController.text.isEmpty && _postImages.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Nội dung hoặc hình ảnh không được để trống"),
-        ),
-      );
-      return;
-    }
-
+  /// Lưu một field đơn lẻ vào Firestore (và update Auth nếu field là name)
+  Future<void> _saveFieldToFirestore(String fieldName, dynamic value) async {
+    if (user == null) return;
     try {
-      List<String> imageUrls = [];
-      for (var file in _postImages) {
-        String url = await _uploadFile(
-          file,
-          "posts/${user!.uid}/${DateTime.now().millisecondsSinceEpoch}.jpg",
-        );
-        imageUrls.add(url);
+      // Nếu sửa name thì update FirebaseAuth displayName luôn
+      if (fieldName == 'name') {
+        try {
+          await user!.updateDisplayName(value?.toString() ?? "");
+        } catch (e) {
+          debugPrint("updateDisplayName error: $e");
+        }
       }
+      await FirebaseFirestore.instance.collection("users").doc(user!.uid).set({
+        fieldName: value,
+        "updatedAt": FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
-      await FirebaseFirestore.instance.collection("posts").add({
-        "uid": user!.uid,
-        "name": user!.displayName ?? "Ẩn danh",
-        "avatar": user!.photoURL,
-        "content": _postController.text,
-        "images": imageUrls,
-        "likes": [],
-        "createdAt": FieldValue.serverTimestamp(),
-      });
+      // reload user to sync
+      try {
+        await user!.reload();
+      } catch (_) {}
 
-      setState(() {
-        _postController.clear();
-        _postImages.clear();
-      });
-    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text("Lỗi: $e")));
+        ).showSnackBar(const SnackBar(content: Text("Đã lưu")));
       }
+    } catch (e) {
+      debugPrint("Save single field error: $e");
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Lỗi lưu: $e")));
     }
   }
 
-  /// like / unlike post
-  Future<void> _toggleLike(DocumentSnapshot post) async {
-    final data = post.data() as Map<String, dynamic>;
-    final List likes = data["likes"] ?? [];
-    final postRef = post.reference;
-
-    if (likes.contains(user!.uid)) {
-      await postRef.update({
-        "likes": FieldValue.arrayRemove([user!.uid]),
-      });
-    } else {
-      await postRef.update({
-        "likes": FieldValue.arrayUnion([user!.uid]),
-      });
-    }
-  }
-
-  /// thêm bình luận
-  Future<void> _addComment(DocumentSnapshot post, String text) async {
-    if (text.trim().isEmpty) return;
-
-    await post.reference.collection("comments").add({
-      "uid": user!.uid,
-      "name": user!.displayName ?? "Ẩn danh",
-      "avatar": user!.photoURL,
-      "content": text.trim(),
-      "createdAt": FieldValue.serverTimestamp(),
-    });
-  }
-
-  /// widget hiển thị comment
-  Widget _buildComments(DocumentSnapshot post) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: post.reference
-          .collection("comments")
-          .orderBy("createdAt", descending: true)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox();
-        final comments = snapshot.data!.docs;
-
-        return Column(
-          children: comments.map((c) {
-            final data = c.data() as Map<String, dynamic>;
-            return ListTile(
-              leading: CircleAvatar(
-                backgroundImage: data["avatar"] != null
-                    ? NetworkImage(data["avatar"])
-                    : const AssetImage("assets/images/avatar.png")
-                          as ImageProvider,
-              ),
-              title: Text(data["name"] ?? "Ẩn danh"),
-              subtitle: Text(data["content"] ?? ""),
-            );
-          }).toList(),
+  /// dialog chung để edit text field; onSavedLocal cập nhật UI, saveToFirestore nếu true thì lưu ngay
+  Future<void> _showEditDialog({
+    required String title,
+    required String initialValue,
+    required ValueChanged<String> onSavedLocal,
+    String firestoreField = '',
+    bool saveToFirestore = false,
+    TextInputType keyboardType = TextInputType.text,
+    String? hint,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Chỉnh sửa $title'),
+          content: TextField(
+            controller: controller,
+            keyboardType: keyboardType,
+            decoration: InputDecoration(hintText: hint ?? 'Nhập $title'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Hủy'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final val = controller.text.trim();
+                onSavedLocal(val);
+                Navigator.pop(context);
+                if (saveToFirestore && firestoreField.isNotEmpty) {
+                  await _saveFieldToFirestore(firestoreField, val);
+                }
+              },
+              child: const Text('Lưu'),
+            ),
+          ],
         );
       },
     );
   }
 
-  /// widget hiển thị 1 bài viết
-  Widget _buildPost(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    final List<dynamic> images = data["images"] ?? [];
-    final List<dynamic> likes = data["likes"] ?? [];
-
-    final TextEditingController commentCtrl = TextEditingController();
-
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            /// avatar + tên
-            Row(
-              children: [
-                CircleAvatar(
-                  backgroundImage: data["avatar"] != null
-                      ? NetworkImage(data["avatar"])
-                      : const AssetImage("assets/images/avatar.png")
-                            as ImageProvider,
-                ),
-                const SizedBox(width: 8),
-                Text(data["name"] ?? "Ẩn danh"),
-              ],
+  /// gender dialog (chọn option)
+  Future<void> _showGenderDialog() async {
+    final options = ['Male', 'Female', 'Other', 'Prefer not to say'];
+    String? selected = gender;
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Chọn giới tính'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: options.map((opt) {
+              return RadioListTile<String>(
+                title: Text(opt),
+                value: opt,
+                groupValue: selected,
+                onChanged: (v) {
+                  selected = v;
+                  setState(() {});
+                },
+              );
+            }).toList(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Hủy'),
             ),
-            const SizedBox(height: 8),
-
-            /// nội dung
-            Text(data["content"] ?? ""),
-            const SizedBox(height: 8),
-
-            /// hình ảnh
-            if (images.isNotEmpty)
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: images
-                    .map(
-                      (url) => Image.network(
-                        url,
-                        width: 120,
-                        height: 120,
-                        fit: BoxFit.cover,
-                      ),
-                    )
-                    .toList(),
-              ),
-
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                IconButton(
-                  icon: Icon(
-                    likes.contains(user!.uid)
-                        ? Icons.favorite
-                        : Icons.favorite_border,
-                    color: likes.contains(user!.uid) ? Colors.red : null,
-                  ),
-                  onPressed: () => _toggleLike(doc),
-                ),
-                Text("${likes.length} lượt thích"),
-              ],
+            ElevatedButton(
+              onPressed: () async {
+                setState(() => gender = selected ?? "");
+                Navigator.pop(context);
+                await _saveFieldToFirestore('gender', gender ?? "");
+              },
+              child: const Text('Lưu'),
             ),
-
-            /// nhập bình luận
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: commentCtrl,
-                    decoration: const InputDecoration(
-                      hintText: "Viết bình luận...",
-                    ),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.send),
-                  onPressed: () {
-                    _addComment(doc, commentCtrl.text);
-                    commentCtrl.clear();
-                  },
-                ),
-              ],
-            ),
-
-            /// danh sách comment
-            _buildComments(doc),
           ],
-        ),
+        );
+      },
+    );
+  }
+
+  /// pick date of birth with date picker, save to Firestore immediately
+  Future<void> _pickDateOfBirth() async {
+    DateTime initial = DateTime.now().subtract(const Duration(days: 365 * 20));
+    if (birthday != null && birthday!.isNotEmpty) {
+      try {
+        final parts = birthday!.split('/');
+        if (parts.length == 3) {
+          final d = int.parse(parts[0]);
+          final m = int.parse(parts[1]);
+          final y = int.parse(parts[2]);
+          initial = DateTime(y, m, d);
+        }
+      } catch (_) {}
+    }
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      final formatted =
+          '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
+      setState(() => birthday = formatted);
+      await _saveFieldToFirestore('birthday', birthday);
+    }
+  }
+
+  Widget _buildInfoRow(String title, String? value, VoidCallback onTap) {
+    return ListTile(
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
+      subtitle: Text(
+        value ?? "",
+        style: const TextStyle(color: Colors.black87),
       ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Trang cá nhân")),
+      appBar: AppBar(title: const Text("Profile")),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            /// avatar + tên
+            // Avatar
             GestureDetector(
               onTap: _pickAvatarImage,
               child: CircleAvatar(
-                radius: 50,
+                radius: 56,
                 backgroundImage: _avatarImage != null
-                    ? FileImage(_avatarImage!) // ảnh mới chọn local
-                    : (user?.photoURL != null && user!.photoURL!.isNotEmpty)
-                    ? NetworkImage(user!.photoURL!) // ảnh đã lưu trên Firebase
-                    : null, // mặc định ko có ảnh
-                child:
-                    (_avatarImage == null &&
-                        (user?.photoURL == null || user!.photoURL!.isEmpty))
-                    ? const Icon(Icons.person, size: 50)
-                    : null,
+                    ? FileImage(_avatarImage!)
+                    : (avatarUrl != null && avatarUrl!.isNotEmpty)
+                    ? NetworkImage(avatarUrl!)
+                    : const AssetImage("assets/images/default_avatar.png")
+                          as ImageProvider,
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(labelText: "Tên hiển thị"),
             ),
             const SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: _updateProfile,
-              child: const Text("Cập nhật"),
+            TextButton.icon(
+              onPressed: _pickAvatarImage,
+              icon: const Icon(Icons.photo_camera),
+              label: const Text("Change Profile Picture"),
             ),
-            const Divider(height: 32),
+            const SizedBox(height: 16),
 
-            /// tạo bài viết
-            TextField(
-              controller: _postController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: "Bạn đang nghĩ gì?",
-                border: OutlineInputBorder(),
+            // Profile Information
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                "Profile Information",
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
             ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _postImages.map((file) {
-                return Stack(
-                  alignment: Alignment.topRight,
-                  children: [
-                    Image.file(
-                      file,
-                      width: 100,
-                      height: 100,
-                      fit: BoxFit.cover,
-                    ),
-                    GestureDetector(
-                      onTap: () => setState(() => _postImages.remove(file)),
-                      child: const CircleAvatar(
-                        radius: 12,
-                        backgroundColor: Colors.red,
-                        child: Icon(Icons.close, size: 14, color: Colors.white),
-                      ),
-                    ),
-                  ],
-                );
-              }).toList(),
+            const SizedBox(height: 8),
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  _buildInfoRow("Name", name, () {
+                    _showEditDialog(
+                      title: 'Name',
+                      initialValue: name ?? "",
+                      onSavedLocal: (v) => setState(() => name = v),
+                      firestoreField: 'name',
+                      saveToFirestore: true,
+                    );
+                  }),
+                  const Divider(height: 1),
+                  _buildInfoRow("Username", username, () {
+                    _showEditDialog(
+                      title: 'Username',
+                      initialValue: username ?? "",
+                      onSavedLocal: (v) => setState(() => username = v),
+                      firestoreField: 'username',
+                      saveToFirestore: true,
+                    );
+                  }),
+                ],
+              ),
             ),
-            Row(
-              children: [
-                IconButton(
-                  onPressed: _pickPostImages,
-                  icon: const Icon(Icons.photo_library),
-                ),
-                const Spacer(),
-                ElevatedButton(
-                  onPressed: _createPost,
-                  child: const Text("Đăng bài"),
-                ),
-              ],
-            ),
-            const Divider(height: 32),
+            const SizedBox(height: 16),
 
-            /// danh sách bài viết
-            StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection("posts")
-                  .orderBy("createdAt", descending: true)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
+            // Personal Information
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                "Personal Information",
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  _buildInfoRow("User ID", userId, () {
+                    // copy id
+                    if (userId != null && userId!.isNotEmpty) {
+                      Clipboard.setData(ClipboardData(text: userId!));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Copied ID")),
+                      );
+                    }
+                  }),
+                  const Divider(height: 1),
+                  _buildInfoRow("E-mail", email, () {}),
+                  const Divider(height: 1),
+                  _buildInfoRow("Phone Number", phone, () {
+                    _showEditDialog(
+                      title: 'Phone Number',
+                      initialValue: phone ?? "",
+                      onSavedLocal: (v) => setState(() => phone = v),
+                      firestoreField: 'phone',
+                      saveToFirestore: true,
+                      keyboardType: TextInputType.phone,
+                    );
+                  }),
+                  const Divider(height: 1),
+                  _buildInfoRow("Gender", gender, () {
+                    _showGenderDialog();
+                  }),
+                  const Divider(height: 1),
+                  _buildInfoRow("Date of Birth", birthday, () {
+                    _pickDateOfBirth();
+                  }),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            TextButton(
+              onPressed: () async {
+                await FirebaseAuth.instance.signOut();
+                if (mounted) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const LoginPage(),
+                    ), // hoặc màn hình login
+                  );
                 }
-
-                final posts = snapshot.data!.docs;
-                return Column(
-                  children: posts.map((doc) => _buildPost(doc)).toList(),
-                );
               },
+              child: const Text(
+                "Logout Account",
+                style: TextStyle(color: Colors.red),
+              ),
             ),
+
+            const SizedBox(height: 32),
           ],
         ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          await _updateProfile();
+
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (_) => const PetsHomeScreen()),
+            );
+          }
+        },
+        child: const Icon(Icons.save),
       ),
     );
   }
